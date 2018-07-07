@@ -1,0 +1,133 @@
+---
+title: "StatisticalModelingForMS_3"
+author: "ryo_suzuki"
+date:  "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE, echo = F}
+knitr::opts_chunk$set(echo = TRUE)
+
+### import packages
+## multi library import function
+requireLibs <- function(libs) {
+  for(lib in libs){
+    if(!require(lib, character.only = T)){
+      install.packages(lib)
+      require(lib, character.only = T)
+    }
+  }
+}
+
+## requirements
+libs <- c("GGally","ggplot2","utils","stringr","lubridate","lmtest")
+
+## import 
+requireLibs(libs)
+```
+
+```{r import, echo = F}
+
+## import dataset
+## http://www.asakura.co.jp/books/isbn/978-4-254-12853-6/
+## 朝倉書店のサポートページからローカルにダウンロードする
+download.file("http://www.asakura.co.jp/G_27_2.php?id=204","rawdata.zip")
+files <- unzip("rawdata.zip")
+
+## 回帰分析のデータセットを抽出
+file_name <- str_detect(files,"sec3_reg")
+
+## データの入力
+dataset <- read.table(files[file_name], header=T, sep=",", stringsAsFactors = FALSE)
+head(dataset)
+```
+
+## 目的変数のチェック
+
+  ・商品Aの販売個数を対数変換した分布  
+  ・-1以下の山と、0から2にかけての山の多峰性が観測される。  
+  ・ロングテールもあるが少ない。  
+
+```{r data_vis1, echo=F}
+summary(dataset)
+hist(dataset$LogPI_A,50,main = "log_y histgram")
+```
+
+## 系列相関のチェック
+
+  ・目的変数の対数変換には時折大きな上昇がみられる(←プロモーション効果？)  
+  ・系列はDWテストより系列相関がみられる。従って、通常の回帰では不均一分散性を起こす。  
+
+```{r y_timeseries_plot, echo=F}
+dataset$Date <- ymd(dataset$Date)
+
+## DWテストの実行
+lm_dw <- lm(LogPI_A ~ 1,data = dataset)
+dwtest(lm_dw)
+
+## 系列の可視化
+ggplot(data = dataset) +
+geom_line(mapping = aes(x=Date,y=LogPI_A))
+
+```
+
+## 対散布図のチェック
+
+　・LogPI_Aは、Aの価格が高くなると低くなる。高いから買わなくなる。  
+　・逆にBが高くなるとAの販売個数は多くなることから、競合関係にある。  
+　・また広告Aをすると販売個数は上がる。広告効果は高い製品である。  
+　・またBの広告は多少Aの販売個数を下げる傾向にある。  
+
+```{r pair_plot, echo=F}
+dataset$Month <- as.character(month(dataset$Date))
+ggpairs(data = dataset[,-which(colnames(dataset) %in% c("Date","Month"))])
+```
+
+
+## lm関数を用いた線形回帰の推定
+
+　・調整済み決定係数は0.58で目的変数の約58%を説明できている。
+　・F検定も棄却され、パラメータの有意差が確認される。
+　・DisplayBは有意差はなく、商品Bが広告をしても商品Aの販売個数は変わらない。
+　・一方B価格は相関があり、B価格が1%上昇すると商品Aの販売個数は1.9%上昇する。
+　・もっとも大きいのは商品Aの価格で、約5%販売個数はマイナスとなる。
+　
+```{r lm_fit}
+
+## 回帰式の指定
+lm_formula <- formula(LogPI_A ~ LogPriceIndex_A+LogPriceIndex_B+Display_A+Display_B)
+
+## 推定
+lm_result <- lm(
+   formula = lm_formula
+  ,data = dataset
+)
+  
+## 結果の確認(全体)
+summary(lm_result)
+```
+
+## 残差チェック1 - 内生性と正規性
+
+　・残差と他の説明変数との相関はほぼない。
+　・残差のヒストグラムは上に偏りがあり、
+　・コルモゴロフスミルノフ検定の対立仮説 = 正規分布で、これが棄却されたため、
+　　残差に正規性はないと判断できる。
+　　← 仮説として、H1:カウントデータへの回帰,H2:時系列データへの回帰 の2つがある。
+
+```{r lm_chack1, echo = F}
+## 残差の計算
+dataset$resid <- lm_result$residuals
+
+## 正規性の検定
+resid_d <- dataset$resid
+ks.test(resid_d,"pnorm",mean=mean(resid_d),sd=sd(resid_d))
+
+## 対散布図の作成
+ggpairs(data = dataset[,-which(colnames(dataset) %in% c("Date","Month"))])
+
+```
+
+## 残差チェック2 - 不均一分散性
+
+
